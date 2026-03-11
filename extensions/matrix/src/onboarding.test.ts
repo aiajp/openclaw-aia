@@ -161,6 +161,35 @@ describe("matrix onboarding", () => {
     expect(noteText).toContain("MATRIX_<ACCOUNT_ID>_DEVICE_NAME");
   });
 
+  it("resolves status using the overridden Matrix account", async () => {
+    const status = await matrixOnboardingAdapter.getStatus({
+      cfg: {
+        channels: {
+          matrix: {
+            defaultAccount: "default",
+            accounts: {
+              default: {
+                homeserver: "https://matrix.default.example.org",
+              },
+              ops: {
+                homeserver: "https://matrix.ops.example.org",
+                accessToken: "ops-token",
+              },
+            },
+          },
+        },
+      } as CoreConfig,
+      options: undefined,
+      accountOverrides: {
+        matrix: "ops",
+      },
+    });
+
+    expect(status.configured).toBe(true);
+    expect(status.selectionHint).toBe("configured");
+    expect(status.statusLines).toEqual(["Matrix: configured"]);
+  });
+
   it("writes allowlists and room access to the selected Matrix account", async () => {
     setMatrixRuntime({
       state: {

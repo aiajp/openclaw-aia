@@ -158,7 +158,7 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
   const dmEnabled = dmConfig?.enabled ?? true;
   const dmPolicyRaw = dmConfig?.policy ?? "pairing";
   const dmPolicy = allowlistOnly && dmPolicyRaw !== "disabled" ? "allowlist" : dmPolicyRaw;
-  const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "matrix");
+  const textLimit = core.channel.text.resolveTextChunkLimit(cfg, "matrix", account.accountId);
   const mediaMaxMb = opts.mediaMaxMb ?? accountConfig.mediaMaxMb ?? DEFAULT_MEDIA_MAX_MB;
   const mediaMaxBytes = Math.max(1, mediaMaxMb) * 1024 * 1024;
   const startupMs = Date.now();

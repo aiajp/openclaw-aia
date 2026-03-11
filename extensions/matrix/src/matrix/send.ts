@@ -81,7 +81,7 @@ export async function sendMessageMatrix(
         trimmedMessage,
         tableMode,
       );
-      const textLimit = getCore().channel.text.resolveTextChunkLimit(cfg, "matrix");
+      const textLimit = getCore().channel.text.resolveTextChunkLimit(cfg, "matrix", opts.accountId);
       const chunkLimit = Math.min(textLimit, MATRIX_TEXT_LIMIT);
       const chunkMode = getCore().channel.text.resolveChunkMode(cfg, "matrix", opts.accountId);
       const chunks = getCore().channel.text.chunkMarkdownTextWithMode(

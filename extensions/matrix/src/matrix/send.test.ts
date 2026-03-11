@@ -10,6 +10,9 @@ const loadWebMediaMock = vi.fn().mockResolvedValue({
 });
 const getImageMetadataMock = vi.fn().mockResolvedValue(null);
 const resizeToJpegMock = vi.fn();
+const resolveTextChunkLimitMock = vi.fn<
+  (cfg: unknown, channel: unknown, accountId?: unknown) => number
+>(() => 4000);
 
 const runtimeStub = {
   config: {
@@ -24,7 +27,8 @@ const runtimeStub = {
   },
   channel: {
     text: {
-      resolveTextChunkLimit: () => 4000,
+      resolveTextChunkLimit: (cfg: unknown, channel: unknown, accountId?: unknown) =>
+        resolveTextChunkLimitMock(cfg, channel, accountId),
       resolveChunkMode: () => "length",
       chunkMarkdownText: (text: string) => (text ? [text] : []),
       chunkMarkdownTextWithMode: (text: string) => (text ? [text] : []),
@@ -70,6 +74,7 @@ describe("sendMessageMatrix media", () => {
     });
     getImageMetadataMock.mockReset().mockResolvedValue(null);
     resizeToJpegMock.mockReset();
+    resolveTextChunkLimitMock.mockReset().mockReturnValue(4000);
     setMatrixRuntime(runtimeStub);
   });
 
@@ -234,6 +239,17 @@ describe("sendMessageMatrix threads", () => {
       event_id: "$thread",
       "m.in_reply_to": { event_id: "$thread" },
     });
+  });
+
+  it("resolves text chunk limit using the active Matrix account", async () => {
+    const { client } = makeClient();
+
+    await sendMessageMatrix("room:!room:example", "hello", {
+      client,
+      accountId: "ops",
+    });
+
+    expect(resolveTextChunkLimitMock).toHaveBeenCalledWith(expect.anything(), "matrix", "ops");
   });
 });
 

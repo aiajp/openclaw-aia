@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => {
   const callOrder: string[] = [];
   const client = { id: "matrix-client" };
+  const resolveTextChunkLimit = vi.fn<
+    (cfg: unknown, channel: unknown, accountId?: unknown) => number
+  >(() => 4000);
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -14,6 +17,7 @@ const hoisted = vi.hoisted(() => {
     callOrder,
     client,
     logger,
+    resolveTextChunkLimit,
     stopThreadBindingManager,
   };
 });
@@ -60,7 +64,8 @@ vi.mock("../../runtime.js", () => ({
         buildMentionRegexes: () => [],
       },
       text: {
-        resolveTextChunkLimit: () => 4000,
+        resolveTextChunkLimit: (cfg: unknown, channel: unknown, accountId?: unknown) =>
+          hoisted.resolveTextChunkLimit(cfg, channel, accountId),
       },
     },
     system: {
@@ -186,6 +191,7 @@ describe("monitorMatrixProvider", () => {
   beforeEach(() => {
     vi.resetModules();
     hoisted.callOrder.length = 0;
+    hoisted.resolveTextChunkLimit.mockReset().mockReturnValue(4000);
     hoisted.stopThreadBindingManager.mockReset();
     Object.values(hoisted.logger).forEach((mock) => mock.mockReset());
   });
@@ -204,5 +210,19 @@ describe("monitorMatrixProvider", () => {
       "start-client",
     ]);
     expect(hoisted.stopThreadBindingManager).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves text chunk limit for the effective Matrix account", async () => {
+    const { monitorMatrixProvider } = await import("./index.js");
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await monitorMatrixProvider({ abortSignal: abortController.signal });
+
+    expect(hoisted.resolveTextChunkLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      "matrix",
+      "default",
+    );
   });
 });
