@@ -1,3 +1,6 @@
+# AIA Edition
+.ssh-key-*.pem
+
 node_modules
 **/node_modules/
 .env
