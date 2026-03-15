@@ -104,7 +104,7 @@ Skills（ツール群）
 | Tier | モデル | 用途 | 操作例 |
 |------|--------|------|--------|
 | Light | `claude-haiku-4-5` | 軽量・読み取り・定型 | Obsidian記録・読み取り、確認・検索系操作、定期チェック（heartbeat） |
-| Standard | `claude-sonnet-4-6` | 判断・実行 | freee操作（読み取り系）、Claude Code起動・管理、GitHub操作 |
+| Standard | `claude-sonnet-4-6` | 判断・実行 | Claude Code起動・管理、GitHub操作、freee書き込み（仕訳登録・請求書作成） |
 | Critical | `claude-opus-4-6` | 重要・不可逆・デフォルト | freee仕訳登録・請求書発行、二段階承認が必要な操作、未分類タスク |
 
 ### 割り当てルール
@@ -120,7 +120,7 @@ Skills（ツール群）
 
 - heartbeat・ヘルスチェック等の定期タスクは必ず `haiku` を使用
 - Obsidian検索・ノート読み取りは `haiku` で十分
-- freee読み取り（残高確認・一覧取得）は `sonnet` で処理
+- freee読み取り（残高確認・一覧取得）は `haiku` で処理
 - freee書き込み（仕訳・請求書・支払い）は `opus` で慎重に処理
 
 ---
