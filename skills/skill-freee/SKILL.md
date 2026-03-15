@@ -65,7 +65,43 @@ freee操作には軽量書き込みに分類される操作はない。
 貸方: 普通預金 ¥5,500
 摘要: AWS EC2利用料（3月分）
 
-登録しますか？ (yes/no)
+[✅ 承認]  [❌ キャンセル]
+```
+
+**承認UIはSlack Block Kitボタンで実装する（テキスト入力のyes/noは使用しない）。**
+
+Block Kit構造:
+```json
+{
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔔 *freee 仕訳登録 確認*\n日付: 2026-03-15\n借方: 通信費 ¥5,500\n貸方: 普通預金 ¥5,500\n摘要: AWS EC2利用料（3月分）"
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "✅ 承認", "emoji": true },
+          "style": "primary",
+          "action_id": "freee_approve",
+          "value": "approve"
+        },
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "❌ キャンセル", "emoji": true },
+          "style": "danger",
+          "action_id": "freee_cancel",
+          "value": "cancel"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 ### Tier 4: 不可逆操作 — 二段階承認必須
@@ -77,24 +113,84 @@ freee操作には軽量書き込みに分類される操作はない。
 | 支払い実行 | **二段階承認** | `claude-opus-4-6` | 記録 + Slack通知 + 承認記録 |
 | 仕訳削除 | **二段階承認** | `claude-opus-4-6` | 記録 + Slack通知 + 承認記録 |
 
-二段階承認フロー:
+二段階承認フロー（Slack Block Kitボタンで実装）:
+
+**ステップ1: 内容確認**
+```json
+{
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "🔔 *freee 請求書発行 確認（ステップ 1/2）*\n請求先: 株式会社〇〇\n金額: ¥550,000（税込）\n件名: SynthAgent開発費（2026年3月分）\n期日: 2026-04-30\n\n内容を確認してください。"
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "✅ 承認", "emoji": true },
+          "style": "primary",
+          "action_id": "freee_approve_step1",
+          "value": "approve_step1"
+        },
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "❌ キャンセル", "emoji": true },
+          "style": "danger",
+          "action_id": "freee_cancel_step1",
+          "value": "cancel_step1"
+        }
+      ]
+    }
+  ]
+}
 ```
-ステップ1: 内容確認
-🔔 freee 請求書発行 確認（ステップ 1/2）
-請求先: 株式会社〇〇
-金額: ¥550,000（税込）
-件名: SynthAgent開発費（2026年3月分）
-期日: 2026-04-30
 
-内容を確認してください。正しいですか？ (yes/no)
-
-ステップ2: 最終確認
-⚠️ freee 請求書発行 最終確認（ステップ 2/2）
-この操作は取り消せません。
-請求書番号 INV-2026-0042 を発行します。
-
-本当に実行しますか？ (yes/no)
+**ステップ2: 最終確認（ステップ1承認後に送信）**
+```json
+{
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "⚠️ *freee 請求書発行 最終確認（ステップ 2/2）*\nこの操作は取り消せません。\n請求書番号 INV-2026-0042 を発行します。"
+      }
+    },
+    {
+      "type": "actions",
+      "elements": [
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "✅ 最終承認", "emoji": true },
+          "style": "primary",
+          "action_id": "freee_approve_step2",
+          "value": "approve_step2",
+          "confirm": {
+            "title": { "type": "plain_text", "text": "本当に実行しますか？" },
+            "text": { "type": "mrkdwn", "text": "この操作は *取り消せません*。" },
+            "confirm": { "type": "plain_text", "text": "実行する" },
+            "deny": { "type": "plain_text", "text": "やめる" },
+            "style": "danger"
+          }
+        },
+        {
+          "type": "button",
+          "text": { "type": "plain_text", "text": "❌ キャンセル", "emoji": true },
+          "style": "danger",
+          "action_id": "freee_cancel_step2",
+          "value": "cancel_step2"
+        }
+      ]
+    }
+  ]
+}
 ```
+
+**注意**: ステップ2の「最終承認」ボタンにはSlack native confirmダイアログを付与し、誤操作を二重に防止する。
 
 ### 承認タイムアウト
 
