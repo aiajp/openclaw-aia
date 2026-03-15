@@ -23,11 +23,12 @@ EC2上でClaude Codeセッションを起動し、指定ディレクトリでタ
 
 以下のディレクトリのみでClaude Codeセッションを起動できる（ホワイトリスト方式）。
 
-| ディレクトリ | プロダクト |
-|-------------|-----------|
-| `/Volumes/Dev_SSD/rag-in-a-box/` | RAG-in-a-Box |
-| `/Volumes/Dev_SSD/synthagent/` | SynthAgent |
-| `/Volumes/Dev_SSD/openclaw-aia/` | OpenClaw AIA Edition |
+| ディレクトリ | プロダクト | 環境 |
+|-------------|-----------|------|
+| `/home/ubuntu/obsidian-artifacts/` | Obsidian Vault操作 | EC2 |
+| `/home/ubuntu/openclaw-aia/` | OpenClaw AIA Edition | EC2 |
+| `/Volumes/Dev_SSD/rag-in-a-box/` | RAG-in-a-Box | Mac |
+| `/Volumes/Dev_SSD/synthagent/` | SynthAgent | Mac |
 
 **セキュリティ**: ホワイトリスト外のディレクトリでの実行は拒否する。
 
