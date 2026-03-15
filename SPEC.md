@@ -22,7 +22,10 @@ Akkey（Slack）
     ↓
 OpenClaw Gateway（EC2常駐）
     ↓
-Claude API（claude-sonnet-4-5 / claude-haiku-4-5）
+Claude API（タスク別モデル割り当て）
+    ├── claude-haiku-4-5  … 軽量タスク
+    ├── claude-sonnet-4-6 … 判断タスク
+    └── claude-opus-4-6   … 重要・不可逆タスク（デフォルト）
     ↓
 Skills（ツール群）
     ├── Claude Code起動
@@ -91,6 +94,34 @@ Skills（ツール群）
 - GitHub操作
 - AIA組織エージェント（7部門）への委譲
 - SynthAgent連携
+
+---
+
+## モデル割り当て
+
+タスクの重要度・不可逆性に応じて3段階でモデルを使い分ける。
+
+| Tier | モデル | 用途 | 操作例 |
+|------|--------|------|--------|
+| Light | `claude-haiku-4-5` | 軽量・読み取り・定型 | Obsidian記録・読み取り、確認・検索系操作、定期チェック（heartbeat） |
+| Standard | `claude-sonnet-4-6` | 判断・実行 | freee操作（読み取り系）、Claude Code起動・管理、GitHub操作 |
+| Critical | `claude-opus-4-6` | 重要・不可逆・デフォルト | freee仕訳登録・請求書発行、二段階承認が必要な操作、未分類タスク |
+
+### 割り当てルール
+
+1. **デフォルトモデル**: `claude-opus-4-6`（未分類・判断が難しいタスクは最上位で処理）
+2. **スキル別オーバーライド**: 各スキルの SKILL.md でモデルを指定可能
+3. **操作分類との対応**:
+   - 読み取り・軽量書き込み → `claude-haiku-4-5`
+   - 重要操作 → `claude-sonnet-4-6`
+   - 不可逆操作 → `claude-opus-4-6`
+
+### コスト最適化の方針
+
+- heartbeat・ヘルスチェック等の定期タスクは必ず `haiku` を使用
+- Obsidian検索・ノート読み取りは `haiku` で十分
+- freee読み取り（残高確認・一覧取得）は `sonnet` で処理
+- freee書き込み（仕訳・請求書・支払い）は `opus` で慎重に処理
 
 ---
 
