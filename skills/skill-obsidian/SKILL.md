@@ -7,7 +7,7 @@ metadata:
       {
         "emoji": "📓",
         "model": "claude-haiku-4-5",
-        "requires": { "config": ["skills.skill-obsidian.vault_path"] },
+        "requires": { "envs": ["OBSIDIAN_VAULT_PATH"] },
       },
   }
 ---

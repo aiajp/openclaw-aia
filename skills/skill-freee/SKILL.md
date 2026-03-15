@@ -7,7 +7,7 @@ metadata:
       {
         "emoji": "💴",
         "model": "claude-opus-4-6",
-        "requires": { "config": ["skills.skill-freee.company_id"] },
+        "requires": { "envs": ["FREEE_COMPANY_ID", "FREEE_CLIENT_ID", "FREEE_CLIENT_SECRET"] },
       },
   }
 ---
