@@ -376,6 +376,27 @@ function runAgentAttempt(params: {
         bootstrapPromptWarningSignature,
         images: params.isFallbackRetry ? undefined : params.opts.images,
         streamParams: params.opts.streamParams,
+        onStreamEvent: (event) => {
+          if (event.type === "assistant" && event.text) {
+            emitAgentEvent({
+              runId: params.runId,
+              stream: "assistant",
+              data: { text: event.text, delta: true },
+            });
+          } else if (event.type === "tool_use") {
+            emitAgentEvent({
+              runId: params.runId,
+              stream: "tool",
+              data: { phase: "start", name: event.toolName, input: event.toolInput },
+            });
+          } else if (event.type === "tool_result") {
+            emitAgentEvent({
+              runId: params.runId,
+              stream: "tool",
+              data: { phase: "end", toolUseId: event.toolUseId },
+            });
+          }
+        },
       });
     return runCliWithSession(cliSessionId).catch(async (err) => {
       // Handle CLI session expired error

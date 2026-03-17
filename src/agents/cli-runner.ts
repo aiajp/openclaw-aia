@@ -33,6 +33,12 @@ import {
   resolveSystemPromptUsage,
   writeCliImages,
 } from "./cli-runner/helpers.js";
+import {
+  createStreamJsonParser,
+  extractStreamJsonResult,
+  type StreamJsonEvent,
+  type StreamJsonCallback,
+} from "./cli-runner/stream-json.js";
 import { resolveOpenClawDocsPath } from "./docs-path.js";
 import { FailoverError, resolveFailoverStatus } from "./failover-error.js";
 import {
@@ -69,6 +75,8 @@ export async function runCliAgent(params: {
   /** Backward-compat fallback when only the previous signature is available. */
   bootstrapPromptWarningSignature?: string;
   images?: ImageContent[];
+  /** Called for each parsed stream-json event when output mode is "stream-json". */
+  onStreamEvent?: StreamJsonCallback;
 }): Promise<EmbeddedPiRunResult> {
   const started = Date.now();
   const workspaceResolution = resolveRunWorkspaceDir({
@@ -304,6 +312,18 @@ export async function runCliAgent(params: {
           cliSessionId: useResume ? resolvedSessionId : undefined,
         });
 
+        // Set up stream-json parsing when using stream-json output mode.
+        const outputMode = useResume ? (backend.resumeOutput ?? backend.output) : backend.output;
+        const isStreamJson = outputMode === "stream-json";
+        const streamEvents: StreamJsonEvent[] = [];
+        let streamParser: ReturnType<typeof createStreamJsonParser> | undefined;
+        if (isStreamJson) {
+          streamParser = createStreamJsonParser((event) => {
+            streamEvents.push(event);
+            params.onStreamEvent?.(event);
+          });
+        }
+
         const managedRun = await supervisor.spawn({
           sessionId: params.sessionId,
           backendId: backendResolved.id,
@@ -316,8 +336,12 @@ export async function runCliAgent(params: {
           cwd: workspaceDir,
           env,
           input: stdinPayload,
+          ...(streamParser ? { onStdout: (chunk: string) => streamParser.feed(chunk) } : {}),
         });
         const result = await managedRun.wait();
+
+        // Flush remaining stream-json buffer after process exits.
+        streamParser?.flush();
 
         const stdout = result.stdout.trim();
         const stderr = result.stderr.trim();
@@ -382,12 +406,19 @@ export async function runCliAgent(params: {
           });
         }
 
-        const outputMode = useResume ? (backend.resumeOutput ?? backend.output) : backend.output;
+        if (isStreamJson && streamEvents.length > 0) {
+          const parsed = extractStreamJsonResult(streamEvents, backend);
+          return parsed ?? { text: stdout };
+        }
 
-        if (outputMode === "text") {
+        const finalOutputMode = useResume
+          ? (backend.resumeOutput ?? backend.output)
+          : backend.output;
+
+        if (finalOutputMode === "text") {
           return { text: stdout, sessionId: undefined };
         }
-        if (outputMode === "jsonl") {
+        if (finalOutputMode === "jsonl") {
           const parsed = parseCliJsonl(stdout, backend);
           return parsed ?? { text: stdout };
         }
@@ -488,6 +519,7 @@ export async function runClaudeCliAgent(params: {
   ownerNumbers?: string[];
   claudeSessionId?: string;
   images?: ImageContent[];
+  onStreamEvent?: StreamJsonCallback;
 }): Promise<EmbeddedPiRunResult> {
   return runCliAgent({
     sessionId: params.sessionId,
@@ -506,5 +538,6 @@ export async function runClaudeCliAgent(params: {
     ownerNumbers: params.ownerNumbers,
     cliSessionId: params.claudeSessionId,
     images: params.images,
+    onStreamEvent: params.onStreamEvent,
   });
 }

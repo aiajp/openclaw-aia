@@ -225,6 +225,7 @@ export async function runAgentTurnWithFallback(params: {
             return (async () => {
               let lifecycleTerminalEmitted = false;
               try {
+                let streamedAssistantText = false;
                 const result = await runCliAgent({
                   sessionId: params.followupRun.run.sessionId,
                   sessionKey: params.sessionKey,
@@ -247,21 +248,45 @@ export async function runAgentTurnWithFallback(params: {
                       bootstrapPromptWarningSignaturesSeen.length - 1
                     ],
                   images: params.opts?.images,
+                  onStreamEvent: (event) => {
+                    if (event.type === "assistant" && event.text) {
+                      streamedAssistantText = true;
+                      emitAgentEvent({
+                        runId,
+                        stream: "assistant",
+                        data: { text: event.text, delta: true },
+                      });
+                    } else if (event.type === "tool_use") {
+                      emitAgentEvent({
+                        runId,
+                        stream: "tool",
+                        data: { phase: "start", name: event.toolName, input: event.toolInput },
+                      });
+                    } else if (event.type === "tool_result") {
+                      emitAgentEvent({
+                        runId,
+                        stream: "tool",
+                        data: { phase: "end", toolUseId: event.toolUseId },
+                      });
+                    }
+                  },
                 });
                 bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
                   result.meta?.systemPromptReport,
                 );
 
-                // CLI backends don't emit streaming assistant events, so we need to
-                // emit one with the final text so server-chat can populate its buffer
-                // and send the response to TUI/WebSocket clients.
-                const cliText = result.payloads?.[0]?.text?.trim();
-                if (cliText) {
-                  emitAgentEvent({
-                    runId,
-                    stream: "assistant",
-                    data: { text: cliText },
-                  });
+                // When stream-json is used, assistant events are emitted during
+                // streaming. Only emit the final text if no streaming occurred
+                // (e.g. fallback to json output mode).
+                if (!streamedAssistantText) {
+                  const cliText = result.payloads?.[0]?.text?.trim();
+                  if (cliText) {
+                    emitAgentEvent({
+                      runId,
+                      stream: "assistant",
+                      data: { text: cliText },
+                    });
+                  }
                 }
 
                 emitAgentEvent({
