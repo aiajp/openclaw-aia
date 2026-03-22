@@ -2,21 +2,21 @@
 
 ## インスタンス情報
 
-| 項目 | 値 |
-|------|-----|
-| インスタンスID | i-049ba110b475f2573 |
-| パブリックIP | 43.207.98.175 |
-| インスタンスタイプ | t3.medium |
-| AMI | ami-04ae19f2563b23082 (Ubuntu 24.04 LTS) |
-| ストレージ | 20GB gp3 |
-| リージョン | ap-northeast-1 |
-| キーペア | aia-openclaw-key |
-| セキュリティグループ | sg-00453557f8d6518da (aia-openclaw-sg) |
+| 項目                 | 値                                       |
+| -------------------- | ---------------------------------------- |
+| インスタンスID       | i-049ba110b475f2573                      |
+| パブリックIP         | 54.249.184.165                           |
+| インスタンスタイプ   | t3.medium                                |
+| AMI                  | ami-04ae19f2563b23082 (Ubuntu 24.04 LTS) |
+| ストレージ           | 20GB gp3                                 |
+| リージョン           | ap-northeast-1                           |
+| キーペア             | aia-openclaw-key                         |
+| セキュリティグループ | sg-00453557f8d6518da (aia-openclaw-sg)   |
 
 ## SSH接続
 
 ```bash
-ssh -i /Volumes/Dev_SSD/openclaw-aia/.ssh-key-aia-openclaw.pem ubuntu@43.207.98.175
+ssh -i /Volumes/Dev_SSD/openclaw-aia/.ssh-key-aia-openclaw.pem ubuntu@54.249.184.165
 ```
 
 ## 初期設定手順（SSH接続後）
@@ -35,6 +35,7 @@ sudo apt install -y nodejs
 ```
 
 確認:
+
 ```bash
 node --version  # v22.x.x
 npm --version
@@ -53,6 +54,7 @@ openclaw onboard --install-daemon
 ```
 
 このコマンドで以下が設定される:
+
 - systemd user service の作成
 - 設定ディレクトリ `~/.openclaw/` の初期化
 - Gateway デーモンの登録
@@ -116,35 +118,38 @@ journalctl --user -u openclaw -f
 
 ## 設定ファイルパス
 
-| パス | 用途 |
-|------|------|
-| `/opt/openclaw.env` | 環境変数（APIキー等） |
-| `~/.openclaw/` | 設定ディレクトリ |
-| `~/.openclaw/config.yaml` | メイン設定 |
-| `~/.openclaw/skills/` | スキル定義 |
-| `~/.openclaw/logs/` | ログディレクトリ |
+| パス                      | 用途                  |
+| ------------------------- | --------------------- |
+| `/opt/openclaw.env`       | 環境変数（APIキー等） |
+| `~/.openclaw/`            | 設定ディレクトリ      |
+| `~/.openclaw/config.yaml` | メイン設定            |
+| `~/.openclaw/skills/`     | スキル定義            |
+| `~/.openclaw/logs/`       | ログディレクトリ      |
 
 ## セキュリティグループ
 
-| ポート | プロトコル | ソース | 用途 |
-|--------|-----------|--------|------|
-| 22 | TCP | 182.249.49.134/32 | SSH |
-| 18789 | TCP | 182.249.49.134/32 | OpenClaw Gateway |
+| ポート | プロトコル | ソース            | 用途             |
+| ------ | ---------- | ----------------- | ---------------- |
+| 22     | TCP        | 182.249.49.134/32 | SSH              |
+| 18789  | TCP        | 182.249.49.134/32 | OpenClaw Gateway |
 
 > **注意**: IPアドレスが変わった場合はセキュリティグループのインバウンドルールを更新すること。
 
 ## トラブルシューティング
 
 ### SSH接続できない
+
 - セキュリティグループのIPアドレスが現在のIPと一致しているか確認
 - キーファイルのパーミッションが 600 か確認
 
 ### Gateway が起動しない
+
 ```bash
 journalctl --user -u openclaw --no-pager -n 50
 ```
 
 ### Node.js バージョンが古い
+
 ```bash
 sudo apt remove nodejs
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -

@@ -27,31 +27,47 @@ OpenClawのスキルフレームワークに準拠し、以下の構造で実装
 - **handler.ts**: ビジネスロジック
 
 ### 実装優先順位
+
 1. `skill-claude-code` — EC2上でClaude Codeセッションを起動・管理
 2. `skill-freee` — freee APIとの連携（不可逆操作保護必須）
 3. `skill-obsidian` — Obsidian Vaultの読み書き
 
 ## EC2デプロイ
 
-ホスト: `43.207.98.175` (ap-northeast-1, t3.medium)
+ホスト: `54.249.184.165` (ap-northeast-1, t3.medium)
 
 ```bash
 # SSH接続
-ssh -i /Volumes/Dev_SSD/openclaw-aia/.ssh-key-aia-openclaw.pem ubuntu@43.207.98.175
+ssh -i /Volumes/Dev_SSD/openclaw-aia/.ssh-key-aia-openclaw.pem ubuntu@54.249.184.165
 
 # 詳細手順は docs/setup.md を参照
 ```
+
+### SSH接続エラー時の自動修復
+
+ISPのIP変更によりSSH接続がタイムアウトする場合、SGルールを自動更新する:
+
+```bash
+# 自動修復スクリプト（現在のIPを自動検出してSG更新）
+./scripts/update-ssh-sg.sh
+
+# 手動でIP指定も可能
+./scripts/update-ssh-sg.sh 59.132.xx.xx
+```
+
+**Claude Codeへの指示**: SSH接続が `Operation timed out` で失敗した場合、
+まず `./scripts/update-ssh-sg.sh` を実行してからリトライすること。
 
 ## セキュリティ方針 — 4段階操作分類
 
 すべてのスキル実装は以下の操作分類に従うこと:
 
-| 分類 | 例 | 実行方式 | 実装要件 |
-|------|-----|---------|----------|
-| 読み取り | Obsidian検索、freee残高確認 | 自動実行 | ログ記録のみ |
-| 軽量書き込み | Obsidianメモ追記、Claude Code起動 | 自動実行 | ログ記録 + 結果通知 |
-| 重要操作 | freee仕訳登録、GitHub push | 確認プロンプト | Slack確認メッセージ → 承認後実行 |
-| 不可逆操作 | freee請求書発行、支払い実行 | 二段階承認 | 内容確認 → 最終確認 → 実行 |
+| 分類         | 例                                | 実行方式       | 実装要件                         |
+| ------------ | --------------------------------- | -------------- | -------------------------------- |
+| 読み取り     | Obsidian検索、freee残高確認       | 自動実行       | ログ記録のみ                     |
+| 軽量書き込み | Obsidianメモ追記、Claude Code起動 | 自動実行       | ログ記録 + 結果通知              |
+| 重要操作     | freee仕訳登録、GitHub push        | 確認プロンプト | Slack確認メッセージ → 承認後実行 |
+| 不可逆操作   | freee請求書発行、支払い実行       | 二段階承認     | 内容確認 → 最終確認 → 実行       |
 
 ## 触ってはいけないファイル・設定
 
@@ -71,5 +87,6 @@ ssh -i /Volumes/Dev_SSD/openclaw-aia/.ssh-key-aia-openclaw.pem ubuntu@43.207.98.
 ## ビルド・テスト
 
 上流のREADMEおよび本家CLAUDE.mdのBuild/Test節を参照:
+
 - `pnpm install` → `pnpm build` → `pnpm test`
 - Node.js 22+ 必須
