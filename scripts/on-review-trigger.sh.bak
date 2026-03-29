@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# on-review-trigger.sh — Called by Kanban runtime when a task enters awaiting_review
+# Args: $1 = workspaceId, $2 = taskId
+#
+# Extracts PR number from task's latest activity, runs review, and merges if approved.
+
+set -euo pipefail
+
+WORKSPACE_ID="${1:-}"
+TASK_ID="${2:-}"
+REPO="aiajp/synthagent"
+KANBAN_BASE="http://localhost:3484/api/trpc"
+LOG_FILE="/tmp/review-trigger.log"
+
+log() {
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG_FILE"
+}
+
+log "=== Review trigger: workspace=$WORKSPACE_ID task=$TASK_ID ==="
+
+if [[ -z "$TASK_ID" ]]; then
+    log "ERROR: No taskId provided"
+    exit 1
+fi
+
+# 1. Get task session info from Kanban API
+TASK_STATE=$(curl -s "$KANBAN_BASE/workspace.getState?input=%7B%22json%22%3Anull%7D" \
+    -H "x-kanban-workspace-id: $WORKSPACE_ID" 2>/dev/null)
+
+# 2. Extract PR URL from latest activity finalMessage
+PR_URL=$(echo "$TASK_STATE" | python3 -c "
+import sys, json, re
+state = json.loads(sys.stdin.read())['result']['data']
+session = state['sessions'].get('$TASK_ID', {})
+activity = session.get('latestHookActivity', {}) or {}
+msg = activity.get('finalMessage', '') or activity.get('activityText', '') or ''
+# Find PR URL pattern
+match = re.search(r'https://github\.com/[^/]+/[^/]+/pull/(\d+)', msg)
+if match:
+    print(match.group(1))
+" 2>/dev/null)
+
+if [[ -z "$PR_URL" ]]; then
+    log "No PR number found in task activity for $TASK_ID"
+    exit 0
+fi
+
+PR_NUMBER="$PR_URL"
+log "Found PR #$PR_NUMBER for task $TASK_ID"
+
+# 3. Run review
+PR_INFO=$(GITHUB_TOKEN= gh pr view "$PR_NUMBER" --repo "$REPO" --json title,additions,deletions,changedFiles 2>/dev/null || true)
+if [[ -z "$PR_INFO" ]]; then
+    log "ERROR: Could not fetch PR #$PR_NUMBER"
+    exit 1
+fi
+
+PR_TITLE=$(echo "$PR_INFO" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['title'])")
+PR_ADDITIONS=$(echo "$PR_INFO" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['additions'])")
+PR_DELETIONS=$(echo "$PR_INFO" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['deletions'])")
+PR_FILES=$(echo "$PR_INFO" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['changedFiles'])")
+
+log "PR #$PR_NUMBER: $PR_TITLE (+$PR_ADDITIONS/-$PR_DELETIONS, $PR_FILES files)"
+
+# 4. Get diff and check for issues
+PR_DIFF=$(GITHUB_TOKEN= gh pr diff "$PR_NUMBER" --repo "$REPO" 2>/dev/null || true)
+
+ISSUES=""
+
+# Check: hardcoded secrets
+if echo "$PR_DIFF" | grep -qiE '(password|secret|api_key|token)\s*=\s*"[^"]+"'; then
+    ISSUES="${ISSUES}CRITICAL: Hardcoded secrets detected\n"
+fi
+
+# Check: test files exist for new code
+HAS_NEW_PY=$(echo "$PR_DIFF" | grep "^diff --git.*\.py" | grep -v test | grep -v __pycache__ | head -1 || true)
+HAS_TESTS=$(echo "$PR_DIFF" | grep "^diff --git.*test" | head -1 || true)
+if [[ -n "$HAS_NEW_PY" && -z "$HAS_TESTS" ]]; then
+    ISSUES="${ISSUES}WARNING: New Python code without test files\n"
+fi
+
+# 5. Decision
+if [[ -n "$ISSUES" ]]; then
+    log "REJECT PR #$PR_NUMBER: $ISSUES"
+    COMMENT="## 🔍 Auto Review: PR #$PR_NUMBER\n\n❌ **Request Changes**\n\n$ISSUES\n\nPlease fix the issues above and push again."
+    GITHUB_TOKEN= gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$(echo -e "$COMMENT")" 2>/dev/null || true
+    log "Posted review comment to PR #$PR_NUMBER"
+
+    # 6. Resume task agent to fix issues (transition awaiting_review → running)
+    log "Resuming task $TASK_ID for re-work..."
+    RESUME_PAYLOAD="{\"event\":\"to_in_progress\",\"taskId\":\"$TASK_ID\",\"workspaceId\":\"$WORKSPACE_ID\",\"metadata\":{\"source\":\"reviewer\",\"activityText\":\"Auto-review rejected: $(echo -e "$ISSUES" | tr '\n' ' ' | head -c 140)\"}}"
+    curl -s -X POST "$KANBAN_BASE/hooks.ingest" \
+        -H "Content-Type: application/json" \
+        -H "x-kanban-workspace-id: $WORKSPACE_ID" \
+        -d "$RESUME_PAYLOAD" 2>/dev/null || true
+    log "Task $TASK_ID resumed for re-work"
+else
+    log "APPROVE PR #$PR_NUMBER — merging"
+    GITHUB_TOKEN= gh pr merge "$PR_NUMBER" --repo "$REPO" --merge --delete-branch 2>/dev/null || true
+    log "Merged PR #$PR_NUMBER"
+fi
+
+log "=== Review trigger complete ==="
