@@ -1,9 +1,9 @@
 #!/usr/bin/env npx tsx
 /**
- * on-review-trigger.ts — Opus API-based PR review for Kanban tasks
+ * on-review-trigger.ts — Claude Code CLI-based PR review for Kanban tasks
  *
  * Replaces the grep-based on-review-trigger.sh with semantic code review
- * using the Anthropic Messages API (Claude Opus).
+ * using Claude Code CLI (--print --model opus). Uses browser/subscription auth.
  *
  * Called by Kanban runtime when a task enters awaiting_review.
  * Args: argv[1] = workspaceId, argv[2] = taskId
@@ -15,8 +15,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 // ── Config ──
 
 const KANBAN_BASE = process.env.KANBAN_BASE ?? "http://localhost:3484/api/trpc";
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
-const REVIEW_MODEL = process.env.REVIEW_MODEL ?? "claude-opus-4-6-20250527";
+const REVIEW_MODEL = process.env.REVIEW_MODEL ?? "opus";
 const DEFAULT_REPO = process.env.REVIEWER_DEFAULT_REPO ?? "aiajp/synthagent";
 const MAX_RETRIES = parseInt(process.env.REVIEW_MAX_RETRIES ?? "2", 10);
 const LOG_FILE = "/tmp/review-trigger.log";
@@ -128,18 +127,14 @@ function extractPrNumber(text: string): string | null {
   return match ? match[1] : null;
 }
 
-// ── Anthropic API ──
+// ── Claude Code CLI Review ──
 
-async function callOpusReview(
+function callOpusReview(
   sddSpec: string,
   prDiff: string,
   prTitle: string,
   repo: string,
-): Promise<ReviewResult> {
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set");
-  }
-
+): ReviewResult {
   const reviewPrompt = `You are a senior code reviewer for AIA's projects (repo: ${repo}).
 
 Review this PR against the SDD specification and return ONLY a valid JSON object (no markdown, no code fences).
@@ -193,40 +188,25 @@ Return JSON with this exact structure:
 
 If everything looks good, return verdict "approve" with an empty findings array.`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: REVIEW_MODEL,
-      max_tokens: 4096,
-      messages: [{ role: "user", content: reviewPrompt }],
-    }),
-    signal: AbortSignal.timeout(120_000),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${body}`);
-  }
-
-  const data = (await res.json()) as {
-    content: Array<{ type: string; text?: string }>;
-  };
-
-  const textBlock = data.content.find((b) => b.type === "text");
-  if (!textBlock?.text) {
-    throw new Error("No text response from Anthropic API");
-  }
+  // Use Claude Code CLI with --print (non-interactive, subscription auth)
+  const output = execSync(`claude --print --model ${REVIEW_MODEL} --output-format text`, {
+    input: reviewPrompt,
+    encoding: "utf-8",
+    timeout: 180_000, // 3 minutes
+    maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, FORCE_COLOR: "0" },
+  }).trim();
 
   // Parse JSON from response (handle potential markdown fences)
-  let jsonStr = textBlock.text.trim();
+  let jsonStr = output;
   const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (fenceMatch) {
     jsonStr = fenceMatch[1].trim();
+  }
+  // Also handle case where response has text before/after JSON
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[0];
   }
 
   return JSON.parse(jsonStr) as ReviewResult;
@@ -397,13 +377,13 @@ async function main(): Promise<void> {
     `PR #${prNumber}: ${prInfo.title} (+${prInfo.additions}/-${prInfo.deletions}, ${prInfo.changedFiles} files)`,
   );
 
-  // 5. Call Opus API for review
-  log("Calling Opus API for review...");
+  // 5. Call Claude Code CLI for review
+  log("Calling Claude Code CLI for review (model: " + REVIEW_MODEL + ")...");
   let reviewResult: ReviewResult;
   try {
-    reviewResult = await callOpusReview(cardPrompt, prDiff, prInfo.title, DEFAULT_REPO);
+    reviewResult = callOpusReview(cardPrompt, prDiff, prInfo.title, DEFAULT_REPO);
   } catch (err) {
-    log(`Opus API error: ${err instanceof Error ? err.message : String(err)}`);
+    log(`Claude Code review error: ${err instanceof Error ? err.message : String(err)}`);
     // Fallback: don't block, leave for manual review
     log("Falling back to manual review (leaving task in awaiting_review)");
     process.exit(0);
