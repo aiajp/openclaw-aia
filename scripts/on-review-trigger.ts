@@ -439,6 +439,7 @@ async function main(): Promise<void> {
           taskId,
           prompt: fixPrompt,
           startInPlanMode: false,
+          baseRef: "HEAD",
         });
         log(`Started fix session for task ${taskId}`);
       } catch (err) {
