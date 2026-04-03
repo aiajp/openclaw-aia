@@ -19,4 +19,4 @@ jobs:
           curl -s -X POST "https://slack.com/api/chat.postMessage" \
             -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"channel\": \"#aia-dev\", \"text\": \"🔍 Auto Review requested: PR #${{ github.event.pull_request.number }} in ${{ github.repository }} (Task #${{ steps.issue.outputs.number }}) Branch: ${{ github.head_ref }}\"}"
+            -d "{\"channel\": \"#claw\", \"text\": \"🔍 Auto Review requested: PR #${{ github.event.pull_request.number }} in ${{ github.repository }} (Task #${{ steps.issue.outputs.number }}) Branch: ${{ github.head_ref }}\"}"
