@@ -1,0 +1,80 @@
+name: "Scrum: Merge → Done"
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  move-to-done:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract issue number from branch
+        id: issue
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Move task to "Done" and close issue
+        if: steps.issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.issue.outputs.number }}');
+            const projectId = '${{ vars.PROJECT_ID }}';
+            const statusFieldId = '${{ vars.STATUS_FIELD_ID }}';
+            const doneOptionId = '${{ vars.DONE_OPTION_ID }}';
+
+            // Move to "Done" in project
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: issueNumber
+            });
+
+            const itemId = repository?.issue?.projectItems?.nodes[0]?.id;
+            if (!itemId) {
+              console.log(`Issue #${issueNumber} not found in project`);
+              return;
+            }
+
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId, itemId, fieldId: statusFieldId, optionId: doneOptionId });
+
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'completed'
+            });
+
+            console.log(`Issue #${issueNumber} moved to Done and closed`);
+
+      - name: Notify Slack
+        if: steps.issue.outputs.number != ''
+        run: |
+          curl -s -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\": \"#aia-dev\", \"text\": \"✅ Task #${{ steps.issue.outputs.number }} completed — PR #${{ github.event.pull_request.number }} merged in ${{ github.repository }}\"}"
