@@ -646,3 +646,17 @@ function formatDuration(ms: number): string {
   const sec = totalSec % 60;
   return min > 0 ? `${min}分${sec}秒` : `${sec}秒`;
 }
+
+// ── Session accessors (for external consumers) ──
+
+export function getSession(id: string): SessionInfo | undefined {
+  return sessions.get(id);
+}
+
+export function listSessions(): SessionInfo[] {
+  return Array.from(sessions.values());
+}
+
+export function clearSessions(): void {
+  sessions.clear();
+}
