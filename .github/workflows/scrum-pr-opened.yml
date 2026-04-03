@@ -1,0 +1,61 @@
+name: "Scrum: PR → In Review"
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  move-to-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract issue number from branch
+        id: issue
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Move task to "In Review"
+        if: steps.issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.issue.outputs.number }}');
+            const projectId = '${{ vars.PROJECT_ID }}';
+            const statusFieldId = '${{ vars.STATUS_FIELD_ID }}';
+            const inReviewOptionId = '${{ vars.IN_REVIEW_OPTION_ID }}';
+
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: issueNumber
+            });
+
+            const itemId = repository?.issue?.projectItems?.nodes[0]?.id;
+            if (!itemId) {
+              console.log(`Issue #${issueNumber} not found in project`);
+              return;
+            }
+
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId, itemId, fieldId: statusFieldId, optionId: inReviewOptionId });
+
+            console.log(`Issue #${issueNumber} moved to In Review`);
