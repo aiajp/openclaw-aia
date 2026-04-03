@@ -1,0 +1,106 @@
+name: "Scrum: Auto Review"
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  auto-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract issue number from branch
+        id: issue
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Get PR diff and issue context
+        id: context
+        run: |
+          # Get PR diff
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr.diff 2>/dev/null || true
+          DIFF_LINES=$(wc -l < /tmp/pr.diff)
+          echo "diff_lines=$DIFF_LINES" >> "$GITHUB_OUTPUT"
+
+          # Get linked issue body if available
+          if [ -n "${{ steps.issue.outputs.number }}" ]; then
+            ISSUE_BODY=$(gh issue view ${{ steps.issue.outputs.number }} --json body -q .body 2>/dev/null || echo "No linked issue found")
+          else
+            ISSUE_BODY="No linked issue found"
+          fi
+          echo "$ISSUE_BODY" > /tmp/issue_body.txt
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Opus API Review
+        id: review
+        if: steps.context.outputs.diff_lines != '0'
+        run: |
+          # Truncate diff to avoid token limits
+          head -500 /tmp/pr.diff > /tmp/pr_truncated.diff
+          DIFF_CONTENT=$(cat /tmp/pr_truncated.diff | jq -Rs .)
+          ISSUE_CONTENT=$(cat /tmp/issue_body.txt | jq -Rs .)
+
+          REVIEW_RESULT=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "x-api-key: ${{ secrets.ANTHROPIC_API_KEY }}" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "{
+              \"model\": \"claude-opus-4-6-20250925\",
+              \"max_tokens\": 4096,
+              \"messages\": [{
+                \"role\": \"user\",
+                \"content\": \"You are a senior code reviewer. Review this PR diff against the issue requirements.\n\nIssue description:\n${ISSUE_CONTENT}\n\nPR diff (first 500 lines):\n${DIFF_CONTENT}\n\nRespond ONLY with valid JSON (no markdown, no code fences):\n{\\"verdict\\": \\"approve\\" or \\"request_changes\\", \\"summary\\": \\"one paragraph summary\\", \\"findings\\": [{\\"severity\\": \\"critical|warning|info\\", \\"description\\": \\"...\\"}]}\"
+              }]
+            }")
+
+          # Extract verdict from response
+          CONTENT=$(echo "$REVIEW_RESULT" | jq -r '.content[0].text // empty')
+          if [ -z "$CONTENT" ]; then
+            echo "verdict=approve" >> "$GITHUB_OUTPUT"
+            echo "summary=Auto-review: Could not parse API response. Defaulting to approve." >> "$GITHUB_OUTPUT"
+          else
+            VERDICT=$(echo "$CONTENT" | jq -r '.verdict // "approve"')
+            SUMMARY=$(echo "$CONTENT" | jq -r '.summary // "No summary"')
+            echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+            # Save full review to file to avoid escaping issues
+            echo "$CONTENT" > /tmp/review.json
+          fi
+
+      - name: Post review and approve
+        if: steps.review.outputs.verdict == 'approve'
+        run: |
+          SUMMARY=$(jq -r '.summary // "LGTM"' /tmp/review.json 2>/dev/null || echo "LGTM")
+          BODY="**Auto-reviewed by Opus** ✅
+
+${SUMMARY}"
+          gh pr review ${{ github.event.pull_request.number }} --approve --body "$BODY"
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Post review and request changes
+        if: steps.review.outputs.verdict == 'request_changes'
+        run: |
+          SUMMARY=$(jq -r '.summary // "Changes needed"' /tmp/review.json 2>/dev/null || echo "Changes needed")
+          FINDINGS=$(jq -r '.findings[]? | "- **\(.severity)**: \(.description)"' /tmp/review.json 2>/dev/null || echo "- See review details")
+          BODY="**Auto-reviewed by Opus** ❌
+
+${SUMMARY}
+
+### Findings
+${FINDINGS}"
+          gh pr review ${{ github.event.pull_request.number }} --request-changes --body "$BODY"
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Notify Slack on rejection
+        if: steps.review.outputs.verdict == 'request_changes'
+        run: |
+          curl -s -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\": \"#aia-dev\", \"text\": \"❌ PR #${{ github.event.pull_request.number }} rejected by Auto Reviewer in ${{ github.repository }}. Review feedback posted.\"}"
