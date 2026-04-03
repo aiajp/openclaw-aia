@@ -1,0 +1,68 @@
+name: "Scrum: Task Started → In Progress"
+on:
+  create:
+
+jobs:
+  move-to-in-progress:
+    if: >-
+      github.event.ref_type == 'branch' && (
+        startsWith(github.event.ref, 'feature/') ||
+        startsWith(github.event.ref, 'fix/') ||
+        startsWith(github.event.ref, 'enhance/')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract issue number from branch
+        id: issue
+        run: |
+          BRANCH="${{ github.event.ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Move task to "In Progress"
+        if: steps.issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.issue.outputs.number }}');
+            const projectId = '${{ vars.PROJECT_ID }}';
+            const statusFieldId = '${{ vars.STATUS_FIELD_ID }}';
+            const inProgressOptionId = '${{ vars.IN_PROGRESS_OPTION_ID }}';
+
+            // Get issue's project item ID
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: issueNumber
+            });
+
+            const itemId = repository?.issue?.projectItems?.nodes[0]?.id;
+            if (!itemId) {
+              console.log(`Issue #${issueNumber} not found in project`);
+              return;
+            }
+
+            // Update status to "In Progress"
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId, itemId, fieldId: statusFieldId, optionId: inProgressOptionId });
+
+            console.log(`Issue #${issueNumber} moved to In Progress`);
