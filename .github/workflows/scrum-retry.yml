@@ -1,0 +1,142 @@
+name: "Scrum: Review Reject → Retry"
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  retry-on-reject:
+    if: github.event.review.state == 'changes_requested'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check retry count
+        id: retry
+        run: |
+          RETRY_COUNT=$(gh pr view ${{ github.event.pull_request.number }} \
+            --json comments -q '[.comments[] | select(.body | contains("Auto-retry"))] | length' 2>/dev/null || echo "0")
+          echo "count=$RETRY_COUNT" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Extract issue number
+        id: issue
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | grep -oP '\d+' | head -1)
+          echo "number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+
+      - name: Move to Blocked (max retries reached)
+        if: steps.retry.outputs.count >= 2
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "🚫 **Auto-retry limit reached (2/2).** Moving to Blocked. @aiajp manual review needed."
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Move issue to Blocked in project
+        if: steps.retry.outputs.count >= 2 && steps.issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.issue.outputs.number }}');
+            const projectId = '${{ vars.PROJECT_ID }}';
+            const statusFieldId = '${{ vars.STATUS_FIELD_ID }}';
+            const backlogOptionId = '${{ vars.BACKLOG_OPTION_ID }}';
+
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: issueNumber
+            });
+
+            const itemId = repository?.issue?.projectItems?.nodes[0]?.id;
+            if (!itemId) return;
+
+            // Move back to Backlog (no Blocked column, use Backlog as fallback)
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId, itemId, fieldId: statusFieldId, optionId: backlogOptionId });
+
+      - name: Notify Slack (blocked)
+        if: steps.retry.outputs.count >= 2
+        run: |
+          curl -s -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\": \"#aia-dev\", \"text\": \"🚫 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} blocked after 2 retries. Manual review needed.\"}"
+
+      - name: Request retry
+        if: steps.retry.outputs.count < 2
+        run: |
+          RETRY_NUM=$((  ${{ steps.retry.outputs.count }} + 1 ))
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "🔄 **Auto-retry (${RETRY_NUM}/2):** Requesting Claude Code fix based on review feedback."
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+      - name: Move back to In Progress for retry
+        if: steps.retry.outputs.count < 2 && steps.issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.issue.outputs.number }}');
+            const projectId = '${{ vars.PROJECT_ID }}';
+            const statusFieldId = '${{ vars.STATUS_FIELD_ID }}';
+            const inProgressOptionId = '${{ vars.IN_PROGRESS_OPTION_ID }}';
+
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }
+            `, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: issueNumber
+            });
+
+            const itemId = repository?.issue?.projectItems?.nodes[0]?.id;
+            if (!itemId) return;
+
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }) { projectV2Item { id } }
+              }
+            `, { projectId, itemId, fieldId: statusFieldId, optionId: inProgressOptionId });
+
+      - name: Notify Slack (retry)
+        if: steps.retry.outputs.count < 2
+        run: |
+          RETRY_NUM=$(( ${{ steps.retry.outputs.count }} + 1 ))
+          curl -s -X POST "https://slack.com/api/chat.postMessage" \
+            -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\": \"#aia-dev\", \"text\": \"🔄 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} — retry ${RETRY_NUM}/2 starting.\"}"
