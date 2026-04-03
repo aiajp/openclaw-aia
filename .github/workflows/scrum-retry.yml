@@ -80,7 +80,7 @@ jobs:
           curl -s -X POST "https://slack.com/api/chat.postMessage" \
             -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"channel\": \"#aia-dev\", \"text\": \"🚫 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} blocked after 2 retries. Manual review needed.\"}"
+            -d "{\"channel\": \"#claw\", \"text\": \"🚫 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} blocked after 2 retries. Manual review needed.\"}"
 
       - name: Request retry
         if: steps.retry.outputs.count < 2
@@ -139,4 +139,4 @@ jobs:
           curl -s -X POST "https://slack.com/api/chat.postMessage" \
             -H "Authorization: Bearer ${{ secrets.SLACK_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"channel\": \"#aia-dev\", \"text\": \"🔄 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} — retry ${RETRY_NUM}/2 starting.\"}"
+            -d "{\"channel\": \"#claw\", \"text\": \"🔄 PR #${{ github.event.pull_request.number }} in ${{ github.repository }} — retry ${RETRY_NUM}/2 starting.\"}"
