@@ -1,0 +1,50 @@
+name: "Task（作業単位 = Sub Issue）"
+description: "実装タスク（スクラムエージェントが自動実行可能）"
+labels: ["Type: Task"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "タスク内容"
+      description: "何を実装・修正するか"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "完了基準"
+      description: "どうなれば完了か（テスト含む）"
+    validations:
+      required: true
+  - type: dropdown
+    id: points
+    attributes:
+      label: "Story Points"
+      options:
+        - "1"
+        - "2"
+        - "3"
+        - "5"
+        - "8"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "優先度"
+      options:
+        - "Critical"
+        - "High"
+        - "Medium"
+        - "Low"
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: "実行モデル"
+      description: "Claude Codeの実行モデル（省略時: sonnet）"
+      options:
+        - "sonnet"
+        - "opus"
+        - "haiku"

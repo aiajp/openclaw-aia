@@ -1,0 +1,27 @@
+name: "Feature（機能 = Issue親）"
+description: "機能単位のIssue。Sub IssueとしてTaskを紐づける"
+labels: ["Type: Feature", "Parent"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: "機能概要"
+      description: "この機能で何を実現するか"
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: "想定Task分解（スクラムエージェントが精緻化）"
+      description: "おおまかなTask候補（省略可、AIが提案）"
+  - type: dropdown
+    id: priority
+    attributes:
+      label: "優先度"
+      options:
+        - "Critical"
+        - "High"
+        - "Medium"
+        - "Low"
+    validations:
+      required: true

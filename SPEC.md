@@ -37,27 +37,25 @@ Skills（ツール群）
 
 ## インフラ
 
-| 項目               | 内容                     |
-| ------------------ | ------------------------ |
-| ホスティング       | AWS EC2                  |
+| 項目 | 内容 |
+|------|------|
+| ホスティング | AWS EC2 |
 | インスタンスサイズ | t3.medium（4GB RAM）以上 |
-| OS                 | Ubuntu 24.04             |
-| Node.js            | v22 LTS（22.16+）        |
-| 常駐方式           | systemd user service     |
-| リージョン         | ap-northeast-1（東京）   |
+| OS | Ubuntu 24.04 |
+| Node.js | v22 LTS（22.16+） |
+| 常駐方式 | systemd user service |
+| リージョン | ap-northeast-1（東京） |
 
 ---
 
 ## メッセージングチャンネル
 
 ### Phase 1
-
 - **Slack**（メイン）
   - allowFrom: AkkeyのユーザーID
   - メンション形式: `@openclaw`
 
 ### Phase 2以降（検討）
-
 - LINE
 - Telegram
 
@@ -68,7 +66,6 @@ Skills（ツール群）
 ### Phase 1
 
 #### 1. Claude Code起動 (`skill-claude-code`)
-
 - Claude CodeセッションをEC2上で起動する
 - 指定ディレクトリでタスクを実行させる
 - 実行結果をSlackに返信する
@@ -78,7 +75,6 @@ Skills（ツール群）
   - `/Volumes/Dev_SSD/aia-company/`
 
 #### 2. freee MCP (`skill-freee`)
-
 - freee APIと連携した業務自動化
 - **不可逆操作の保護（必須）**:
   - 仕訳登録 → 確認プロンプト必須
@@ -87,7 +83,6 @@ Skills（ツール群）
 - 読み取り系（残高確認・一覧取得）は自動実行OK
 
 #### 3. Obsidian連携 (`skill-obsidian`)
-
 - Vault: `/Users/akkey/Documents/Artifacts/`
 - 対応操作:
   - デイリーノートへの追記
@@ -96,7 +91,6 @@ Skills（ツール群）
   - 週次PDCAへの記録
 
 ### Phase 2（将来）
-
 - GitHub操作
 - AIA組織エージェント（7部門）への委譲
 - SynthAgent連携
@@ -107,11 +101,11 @@ Skills（ツール群）
 
 タスクの重要度・不可逆性に応じて3段階でモデルを使い分ける。
 
-| Tier     | モデル              | 用途                     | 操作例                                                                   |
-| -------- | ------------------- | ------------------------ | ------------------------------------------------------------------------ |
-| Light    | `claude-haiku-4-5`  | 軽量・読み取り・定型     | Obsidian記録・読み取り、確認・検索系操作、定期チェック（heartbeat）      |
-| Standard | `claude-sonnet-4-6` | 判断・実行               | Claude Code起動・管理、GitHub操作、freee書き込み（仕訳登録・請求書作成） |
-| Critical | `claude-opus-4-6`   | 重要・不可逆・デフォルト | freee仕訳登録・請求書発行、二段階承認が必要な操作、未分類タスク          |
+| Tier | モデル | 用途 | 操作例 |
+|------|--------|------|--------|
+| Light | `claude-haiku-4-5` | 軽量・読み取り・定型 | Obsidian記録・読み取り、確認・検索系操作、定期チェック（heartbeat） |
+| Standard | `claude-sonnet-4-6` | 判断・実行 | Claude Code起動・管理、GitHub操作、freee書き込み（仕訳登録・請求書作成） |
+| Critical | `claude-opus-4-6` | 重要・不可逆・デフォルト | freee仕訳登録・請求書発行、二段階承認が必要な操作、未分類タスク |
 
 ### 割り当てルール
 
@@ -134,21 +128,19 @@ Skills（ツール群）
 ## セキュリティ設計
 
 ### 認証
-
 - Slack allowFrom: Akkeyのユーザーのみ
 - EC2セキュリティグループ: 最小権限
 
 ### 操作分類
 
-| 分類         | 例                                | 実行方式       |
-| ------------ | --------------------------------- | -------------- |
-| 読み取り     | Obsidian検索、freee残高確認       | 自動実行       |
-| 軽量書き込み | Obsidianメモ追記、Claude Code起動 | 自動実行       |
-| 重要操作     | freee仕訳登録、GitHub push        | 確認プロンプト |
-| 不可逆操作   | freee請求書発行、支払い実行       | 二段階承認     |
+| 分類 | 例 | 実行方式 |
+|------|-----|---------|
+| 読み取り | Obsidian検索、freee残高確認 | 自動実行 |
+| 軽量書き込み | Obsidianメモ追記、Claude Code起動 | 自動実行 |
+| 重要操作 | freee仕訳登録、GitHub push | 確認プロンプト |
+| 不可逆操作 | freee請求書発行、支払い実行 | 二段階承認 |
 
 ### 監査ログ
-
 - 全操作をローカルSQLiteに記録
 - 将来的にCloudWatch連携（Phase 2）
 
@@ -191,26 +183,22 @@ OpenClawの以下機能はAIA版では不要のため実装しない：
 ## ロードマップ
 
 ### Week 1
-
 - [ ] OpenClawフォーク → `aiajp/openclaw-aia`
 - [ ] EC2セットアップ（Ubuntu 24.04 + Node.js 22）
 - [ ] Slack連携確認（疎通テスト）
 - [ ] 不要チャンネルの除去
 
 ### Week 2
-
 - [ ] `skill-claude-code` 実装
 - [ ] `skill-obsidian` 実装
 - [ ] 基本的な動作確認
 
 ### Week 3
-
 - [ ] `skill-freee` 実装
 - [ ] 不可逆操作の承認フロー実装
 - [ ] 監査ログ実装
 
 ### Week 4
-
 - [ ] 統合テスト
 - [ ] 運用開始
 
