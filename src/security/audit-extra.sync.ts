@@ -1,18 +1,15 @@
-import { isToolAllowedByPolicies } from "../agents/pi-tools.policy.js";
-import {
-  resolveSandboxConfigForAgent,
-  resolveSandboxToolPolicyForAgent,
-} from "../agents/sandbox.js";
+import { resolveSandboxConfigForAgent } from "../agents/sandbox/config.js";
 import { isDangerousNetworkMode, normalizeNetworkMode } from "../agents/sandbox/network-mode.js";
 /**
  * Synchronous security audit collector functions.
  *
  * These functions analyze config-based security properties without I/O.
  */
+import { resolveSandboxToolPolicyForAgent } from "../agents/sandbox/tool-policy.js";
 import type { SandboxToolPolicy } from "../agents/sandbox/types.js";
 import { getBlockedBindReason } from "../agents/sandbox/validate-sandbox-security.js";
+import { isToolAllowedByPolicies } from "../agents/tool-policy-match.js";
 import { resolveToolProfilePolicy } from "../agents/tool-policy.js";
-import { resolveBrowserConfig } from "../browser/config.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
@@ -21,11 +18,12 @@ import {
 } from "../config/model-input.js";
 import type { AgentToolsConfig } from "../config/types.tools.js";
 import { resolveGatewayAuth } from "../gateway/auth.js";
-import { resolveAllowedAgentIds } from "../gateway/hooks.js";
+import { resolveAllowedAgentIds } from "../gateway/hooks-policy.js";
 import {
   DEFAULT_DANGEROUS_NODE_COMMANDS,
   resolveNodeCommandAllowlist,
 } from "../gateway/node-command-policy.js";
+import { hasConfiguredWebSearchCredential } from "../plugins/web-search-credential-presence.js";
 import { inferParamBFromIdOrName } from "../shared/model-param-b.js";
 import { pickSandboxToolPolicy } from "./audit-tool-policy.js";
 
@@ -328,10 +326,12 @@ function resolveToolPolicies(params: {
 }
 
 function hasWebSearchKey(cfg: OpenClawConfig, env: NodeJS.ProcessEnv): boolean {
-  const search = cfg.tools?.web?.search;
-  return Boolean(
-    search?.apiKey || search?.perplexity?.apiKey || env.BRAVE_API_KEY || env.PERPLEXITY_API_KEY,
-  );
+  return hasConfiguredWebSearchCredential({
+    config: cfg,
+    env,
+    origin: "bundled",
+    bundledAllowlistCompat: true,
+  });
 }
 
 function isWebSearchEnabled(cfg: OpenClawConfig, env: NodeJS.ProcessEnv): boolean {
@@ -354,11 +354,9 @@ function isWebFetchEnabled(cfg: OpenClawConfig): boolean {
 }
 
 function isBrowserEnabled(cfg: OpenClawConfig): boolean {
-  try {
-    return resolveBrowserConfig(cfg.browser, cfg).enabled;
-  } catch {
-    return true;
-  }
+  // The audit only needs the enablement policy, not full browser runtime
+  // resolution. Browser defaults to enabled unless it is explicitly disabled.
+  return cfg.browser?.enabled !== false;
 }
 
 function listGroupPolicyOpen(cfg: OpenClawConfig): string[] {
@@ -530,7 +528,7 @@ export function collectAttackSurfaceSummaryFindings(cfg: OpenClawConfig): Securi
   const group = summarizeGroupPolicy(cfg);
   const elevated = cfg.tools?.elevated?.enabled !== false;
   const webhooksEnabled = cfg.hooks?.enabled === true;
-  const internalHooksEnabled = cfg.hooks?.internal?.enabled === true;
+  const internalHooksEnabled = cfg.hooks?.internal?.enabled !== false;
   const browserEnabled = cfg.browser?.enabled ?? true;
 
   const detail =

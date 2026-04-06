@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { loadConfig } from "../config/config.js";
+import { buildExecApprovalUnavailableReplyPayload } from "../infra/exec-approval-reply.js";
 import {
   hasConfiguredExecApprovalDmRoute,
   type ExecApprovalInitiatingSurfaceState,
@@ -7,18 +9,40 @@ import {
 } from "../infra/exec-approval-surface.js";
 import {
   maxAsk,
-  minSecurity,
+  resolveExecApprovalAllowedDecisions,
   resolveExecApprovals,
   type ExecAsk,
+  type ExecApprovalDecision,
   type ExecSecurity,
 } from "../infra/exec-approvals.js";
+import { logWarn } from "../logger.js";
+import { sendExecApprovalFollowup } from "./bash-tools.exec-approval-followup.js";
 import {
   type ExecApprovalRegistration,
   resolveRegisteredExecApprovalDecision,
 } from "./bash-tools.exec-approval-request.js";
+import { buildApprovalPendingMessage } from "./bash-tools.exec-runtime.js";
 import { DEFAULT_APPROVAL_TIMEOUT_MS } from "./bash-tools.exec-runtime.js";
+import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 
 type ResolvedExecApprovals = ReturnType<typeof resolveExecApprovals>;
+export const MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS = 256;
+const loggedExecApprovalFollowupFailures = new Set<string>();
+
+function rememberExecApprovalFollowupFailureKey(key: string): boolean {
+  if (loggedExecApprovalFollowupFailures.has(key)) {
+    return false;
+  }
+  loggedExecApprovalFollowupFailures.add(key);
+  // Bound memory growth for long-lived processes that see many unique approval failures.
+  if (loggedExecApprovalFollowupFailures.size > MAX_EXEC_APPROVAL_FOLLOWUP_FAILURE_LOG_KEYS) {
+    const oldestKey = loggedExecApprovalFollowupFailures.values().next().value;
+    if (typeof oldestKey === "string") {
+      loggedExecApprovalFollowupFailures.delete(oldestKey);
+    }
+  }
+  return true;
+}
 
 export type ExecHostApprovalContext = {
   approvals: ResolvedExecApprovals;
@@ -42,6 +66,10 @@ export type ExecApprovalUnavailableReason =
   | "initiating-platform-disabled"
   | "initiating-platform-unsupported";
 
+function isHeadlessExecTrigger(trigger?: string): boolean {
+  return trigger === "cron";
+}
+
 export type RegisteredExecApprovalRequestContext = {
   approvalId: string;
   approvalSlug: string;
@@ -51,6 +79,23 @@ export type RegisteredExecApprovalRequestContext = {
   initiatingSurface: ExecApprovalInitiatingSurfaceState;
   sentApproverDms: boolean;
   unavailableReason: ExecApprovalUnavailableReason | null;
+};
+
+export type ExecApprovalFollowupTarget = {
+  approvalId: string;
+  sessionKey?: string;
+  turnSourceChannel?: string;
+  turnSourceTo?: string;
+  turnSourceAccountId?: string;
+  turnSourceThreadId?: string | number;
+};
+
+export type DefaultExecApprovalRequestArgs = {
+  warnings: string[];
+  approvalRunningNoticeMs: number;
+  createApprovalSlug: (approvalId: string) => string;
+  turnSourceChannel?: string;
+  turnSourceAccountId?: string;
 };
 
 export function createExecApprovalPendingState(params: {
@@ -119,7 +164,6 @@ export function createDefaultExecApprovalRequestContext(params: {
 export function resolveBaseExecApprovalDecision(params: {
   decision: string | null;
   askFallback: ResolvedExecApprovals["agent"]["askFallback"];
-  obfuscationDetected: boolean;
 }): {
   approvedByAsk: boolean;
   deniedReason: string | null;
@@ -129,13 +173,6 @@ export function resolveBaseExecApprovalDecision(params: {
     return { approvedByAsk: false, deniedReason: "user-denied", timedOut: false };
   }
   if (!params.decision) {
-    if (params.obfuscationDetected) {
-      return {
-        approvedByAsk: false,
-        deniedReason: "approval-timeout (obfuscation-detected)",
-        timedOut: true,
-      };
-    }
     if (params.askFallback === "full") {
       return { approvedByAsk: true, deniedReason: null, timedOut: true };
     }
@@ -157,7 +194,13 @@ export function resolveExecHostApprovalContext(params: {
     security: params.security,
     ask: params.ask,
   });
-  const hostSecurity = minSecurity(params.security, approvals.agent.security);
+  // exec-approvals.json is the authoritative security policy and must be able to grant
+  // a less-restrictive level (e.g. "full") even when tool/runtime defaults are stricter
+  // (e.g. "allowlist"). This matches node-host behavior and mirrors the ask=off special
+  // case: exec-approvals.json can suppress prompts AND grant broader execution rights.
+  // When exec-approvals.json has no explicit agent or defaults entry, approvals.agent.security
+  // falls back to params.security, so this is backward-compatible.
+  const hostSecurity = approvals.agent.security;
   // An explicit ask=off policy in exec-approvals.json must be able to suppress
   // prompts even when tool/runtime defaults are stricter (for example on-miss).
   const hostAsk = approvals.agent.ask === "off" ? "off" : maxAsk(params.ask, approvals.agent.ask);
@@ -255,5 +298,170 @@ export async function createAndRegisterDefaultExecApprovalRequest(params: {
     initiatingSurface,
     sentApproverDms,
     unavailableReason,
+  };
+}
+
+export function buildDefaultExecApprovalRequestArgs(
+  params: DefaultExecApprovalRequestArgs,
+): DefaultExecApprovalRequestArgs {
+  return {
+    warnings: params.warnings,
+    approvalRunningNoticeMs: params.approvalRunningNoticeMs,
+    createApprovalSlug: params.createApprovalSlug,
+    turnSourceChannel: params.turnSourceChannel,
+    turnSourceAccountId: params.turnSourceAccountId,
+  };
+}
+
+export function buildExecApprovalFollowupTarget(
+  params: ExecApprovalFollowupTarget,
+): ExecApprovalFollowupTarget {
+  return {
+    approvalId: params.approvalId,
+    sessionKey: params.sessionKey,
+    turnSourceChannel: params.turnSourceChannel,
+    turnSourceTo: params.turnSourceTo,
+    turnSourceAccountId: params.turnSourceAccountId,
+    turnSourceThreadId: params.turnSourceThreadId,
+  };
+}
+
+export function createExecApprovalDecisionState(params: {
+  decision: string | null | undefined;
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
+}) {
+  const baseDecision = resolveBaseExecApprovalDecision({
+    decision: params.decision ?? null,
+    askFallback: params.askFallback,
+  });
+  return {
+    baseDecision,
+    approvedByAsk: baseDecision.approvedByAsk,
+    deniedReason: baseDecision.deniedReason,
+  };
+}
+
+export function shouldResolveExecApprovalUnavailableInline(params: {
+  trigger?: string;
+  unavailableReason: ExecApprovalUnavailableReason | null;
+  preResolvedDecision: string | null | undefined;
+}): boolean {
+  return (
+    isHeadlessExecTrigger(params.trigger) &&
+    params.unavailableReason === "no-approval-route" &&
+    params.preResolvedDecision === null
+  );
+}
+
+export function buildHeadlessExecApprovalDeniedMessage(params: {
+  trigger?: string;
+  host: "gateway" | "node";
+  security: ExecSecurity;
+  ask: ExecAsk;
+  askFallback: ResolvedExecApprovals["agent"]["askFallback"];
+}): string {
+  const runLabel = params.trigger === "cron" ? "Cron runs" : "Headless runs";
+  return [
+    `exec denied: ${runLabel} cannot wait for interactive exec approval.`,
+    `Effective host exec policy: security=${params.security} ask=${params.ask} askFallback=${params.askFallback}`,
+    "Stricter values from tools.exec and ~/.openclaw/exec-approvals.json both apply.",
+    "Fix one of these:",
+    '- align both files to security="full" and ask="off" for trusted local automation',
+    "- keep allowlist mode and add an explicit allowlist entry for this command",
+    "- enable Web UI, terminal UI, or chat exec approvals and rerun interactively",
+    'Tip: run "openclaw doctor" and "openclaw approvals get --gateway" to inspect the effective policy.',
+  ].join("\n");
+}
+
+export async function sendExecApprovalFollowupResult(
+  target: ExecApprovalFollowupTarget,
+  resultText: string,
+): Promise<void> {
+  await sendExecApprovalFollowup({
+    approvalId: target.approvalId,
+    sessionKey: target.sessionKey,
+    turnSourceChannel: target.turnSourceChannel,
+    turnSourceTo: target.turnSourceTo,
+    turnSourceAccountId: target.turnSourceAccountId,
+    turnSourceThreadId: target.turnSourceThreadId,
+    resultText,
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const key = `${target.approvalId}:${message}`;
+    if (!rememberExecApprovalFollowupFailureKey(key)) {
+      return;
+    }
+    logWarn(`exec approval followup dispatch failed (id=${target.approvalId}): ${message}`);
+  });
+}
+
+export function buildExecApprovalPendingToolResult(params: {
+  host: "gateway" | "node";
+  command: string;
+  cwd: string | undefined;
+  warningText: string;
+  approvalId: string;
+  approvalSlug: string;
+  expiresAtMs: number;
+  initiatingSurface: ExecApprovalInitiatingSurfaceState;
+  sentApproverDms: boolean;
+  unavailableReason: ExecApprovalUnavailableReason | null;
+  allowedDecisions?: readonly ExecApprovalDecision[];
+  nodeId?: string;
+}): AgentToolResult<ExecToolDetails> {
+  const allowedDecisions = params.allowedDecisions ?? resolveExecApprovalAllowedDecisions();
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          params.unavailableReason !== null
+            ? (buildExecApprovalUnavailableReplyPayload({
+                warningText: params.warningText,
+                reason: params.unavailableReason,
+                channel: params.initiatingSurface.channel,
+                channelLabel: params.initiatingSurface.channelLabel,
+                accountId: params.initiatingSurface.accountId,
+                sentApproverDms: params.sentApproverDms,
+              }).text ?? "")
+            : buildApprovalPendingMessage({
+                warningText: params.warningText,
+                approvalSlug: params.approvalSlug,
+                approvalId: params.approvalId,
+                allowedDecisions,
+                command: params.command,
+                cwd: params.cwd,
+                host: params.host,
+                nodeId: params.nodeId,
+              }),
+      },
+    ],
+    details:
+      params.unavailableReason !== null
+        ? ({
+            status: "approval-unavailable",
+            reason: params.unavailableReason,
+            channel: params.initiatingSurface.channel,
+            channelLabel: params.initiatingSurface.channelLabel,
+            accountId: params.initiatingSurface.accountId,
+            sentApproverDms: params.sentApproverDms,
+            host: params.host,
+            command: params.command,
+            cwd: params.cwd,
+            nodeId: params.nodeId,
+            warningText: params.warningText,
+          } satisfies ExecToolDetails)
+        : ({
+            status: "approval-pending",
+            approvalId: params.approvalId,
+            approvalSlug: params.approvalSlug,
+            expiresAtMs: params.expiresAtMs,
+            allowedDecisions,
+            host: params.host,
+            command: params.command,
+            cwd: params.cwd,
+            nodeId: params.nodeId,
+            warningText: params.warningText,
+          } satisfies ExecToolDetails),
   };
 }

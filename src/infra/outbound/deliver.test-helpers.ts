@@ -1,14 +1,47 @@
 import { vi } from "vitest";
-import { signalOutbound } from "../../channels/plugins/outbound/signal.js";
-import { telegramOutbound } from "../../channels/plugins/outbound/telegram.js";
-import { whatsappOutbound } from "../../channels/plugins/outbound/whatsapp.js";
+import { createIMessageTestPlugin } from "../../../test/helpers/channels/imessage-test-plugin.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import {
+  releasePinnedPluginChannelRegistry,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import { createOutboundTestPlugin, createTestRegistry } from "../../test-utils/channel-plugins.js";
-import { createIMessageTestPlugin } from "../../test-utils/imessage-test-plugin.js";
 import { createInternalHookEventPayload } from "../../test-utils/internal-hook-event-payload.js";
+import type { DeliverOutboundPayloadsParams, OutboundDeliveryResult } from "./deliver.js";
+import {
+  imessageOutboundForTest,
+  signalOutbound,
+  whatsappOutbound,
+} from "./deliver.test-outbounds.js";
 
-export const deliverMocks = {
+type DeliverMockState = {
+  sessions: {
+    appendAssistantMessageToSessionTranscript: (...args: unknown[]) => Promise<{
+      ok: boolean;
+      sessionFile: string;
+    }>;
+  };
+  hooks: {
+    runner: {
+      hasHooks: (...args: unknown[]) => boolean;
+      runMessageSent: (...args: unknown[]) => Promise<void>;
+    };
+  };
+  internalHooks: {
+    createInternalHookEvent: typeof createInternalHookEventPayload;
+    triggerInternalHook: (...args: unknown[]) => Promise<void>;
+  };
+  queue: {
+    enqueueDelivery: (...args: unknown[]) => Promise<string>;
+    ackDelivery: (...args: unknown[]) => Promise<void>;
+    failDelivery: (...args: unknown[]) => Promise<void>;
+  };
+  log: {
+    warn: (...args: unknown[]) => void;
+  };
+};
+
+export const deliverMocks: DeliverMockState = {
   sessions: {
     appendAssistantMessageToSessionTranscript: async () => ({ ok: true, sessionFile: "x" }),
   },
@@ -46,7 +79,7 @@ const _hookMocks = vi.hoisted(() => ({
   },
 }));
 const _internalHookMocks = vi.hoisted(() => ({
-  createInternalHookEvent: vi.fn((...args: unknown[]) =>
+  createInternalHookEvent: vi.fn((...args: Parameters<typeof createInternalHookEventPayload>) =>
     deliverMocks.internalHooks.createInternalHookEvent(...args),
   ),
   triggerInternalHook: vi.fn(
@@ -70,9 +103,18 @@ export const internalHookMocks = _internalHookMocks;
 export const queueMocks = _queueMocks;
 export const logMocks = _logMocks;
 
-vi.mock("../../config/sessions.js", async () => {
-  const actual = await vi.importActual<typeof import("../../config/sessions.js")>(
-    "../../config/sessions.js",
+vi.mock("../../config/sessions/transcript.runtime.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../config/sessions/transcript.runtime.js")
+  >("../../config/sessions/transcript.runtime.js");
+  return {
+    ...actual,
+    appendAssistantMessageToSessionTranscript: _mocks.appendAssistantMessageToSessionTranscript,
+  };
+});
+vi.mock("../../config/sessions/transcript.js", async () => {
+  const actual = await vi.importActual<typeof import("../../config/sessions/transcript.js")>(
+    "../../config/sessions/transcript.js",
   );
   return {
     ...actual,
@@ -118,14 +160,6 @@ export const defaultRegistry = createTestRegistry([
     }),
   },
   {
-    pluginId: "telegram",
-    source: "test",
-    plugin: createOutboundTestPlugin({
-      id: "telegram",
-      outbound: telegramOutbound,
-    }),
-  },
-  {
     pluginId: "whatsapp",
     source: "test",
     plugin: createOutboundTestPlugin({
@@ -136,13 +170,14 @@ export const defaultRegistry = createTestRegistry([
   {
     pluginId: "imessage",
     source: "test",
-    plugin: createIMessageTestPlugin(),
+    plugin: createIMessageTestPlugin({ outbound: imessageOutboundForTest }),
   },
 ]);
 
 export const emptyRegistry = createTestRegistry([]);
 
 export function resetDeliverTestState() {
+  releasePinnedPluginChannelRegistry();
   setActivePluginRegistry(defaultRegistry);
   deliverMocks.hooks.runner.hasHooks = () => false;
   deliverMocks.hooks.runner.runMessageSent = async () => {};
@@ -159,6 +194,7 @@ export function resetDeliverTestState() {
 }
 
 export function clearDeliverTestRegistry() {
+  releasePinnedPluginChannelRegistry();
   setActivePluginRegistry(emptyRegistry);
 }
 
@@ -177,18 +213,15 @@ export function resetDeliverTestMocks(params?: { includeSessionMocks?: boolean }
 }
 
 export async function runChunkedWhatsAppDelivery(params: {
-  deliverOutboundPayloads: (params: {
-    cfg: OpenClawConfig;
-    channel: string;
-    to: string;
-    payloads: Array<{ text: string }>;
-    deps: { sendWhatsApp: ReturnType<typeof vi.fn> };
-    mirror?: unknown;
-  }) => Promise<Array<{ messageId?: string; toJid?: string }>>;
-  mirror?: unknown;
+  deliverOutboundPayloads: (
+    params: DeliverOutboundPayloadsParams,
+  ) => Promise<OutboundDeliveryResult[]>;
+  mirror?: DeliverOutboundPayloadsParams["mirror"];
 }) {
   const sendWhatsApp = vi
-    .fn()
+    .fn<
+      (to: string, text: string, opts?: unknown) => Promise<{ messageId: string; toJid: string }>
+    >()
     .mockResolvedValueOnce({ messageId: "w1", toJid: "jid" })
     .mockResolvedValueOnce({ messageId: "w2", toJid: "jid" });
   const cfg: OpenClawConfig = {
@@ -199,7 +232,7 @@ export async function runChunkedWhatsAppDelivery(params: {
     channel: "whatsapp",
     to: "+1555",
     payloads: [{ text: "abcd" }],
-    deps: { sendWhatsApp },
+    deps: { whatsapp: sendWhatsApp },
     ...(params.mirror ? { mirror: params.mirror } : {}),
   });
   return { sendWhatsApp, results };

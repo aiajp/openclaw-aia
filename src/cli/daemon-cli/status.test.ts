@@ -1,19 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCliRuntimeCapture } from "../test-runtime-capture.js";
+import type { DaemonStatus } from "./status.gather.js";
 
-const gatherDaemonStatus = vi.fn(async (_opts?: unknown) => ({
-  service: {
-    label: "LaunchAgent",
-    loaded: true,
-    loadedText: "loaded",
-    notLoadedText: "not loaded",
-  },
-  rpc: {
-    ok: true,
-    url: "ws://127.0.0.1:18789",
-  },
-  extraServices: [],
-}));
+const gatherDaemonStatus = vi.fn(
+  async (_opts?: unknown): Promise<DaemonStatus> => ({
+    service: {
+      label: "LaunchAgent",
+      loaded: true,
+      loadedText: "loaded",
+      notLoadedText: "not loaded",
+    },
+    rpc: {
+      ok: true,
+      url: "ws://127.0.0.1:18789",
+    },
+    extraServices: [],
+  }),
+);
 const printDaemonStatus = vi.fn();
 
 const { runtimeErrors, defaultRuntime, resetRuntimeCapture } = createCliRuntimeCapture();
@@ -71,6 +74,22 @@ describe("runDaemonStatus", () => {
     ).rejects.toThrow("__exit__:1");
 
     expect(printDaemonStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards require-rpc to daemon status gathering", async () => {
+    await runDaemonStatus({
+      rpc: {},
+      probe: true,
+      requireRpc: true,
+      json: false,
+    });
+
+    expect(gatherDaemonStatus).toHaveBeenCalledWith({
+      rpc: {},
+      probe: true,
+      requireRpc: true,
+      deep: false,
+    });
   });
 
   it("rejects require-rpc when probing is disabled", async () => {
