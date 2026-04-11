@@ -1,5 +1,11 @@
 # AIA Edition
 .ssh-key-*.pem
+.openrouter_key
+.env.local
+.env.*.local
+.playwright-mcp/
+*.bak
+openagents-readme-full.png
 
 node_modules
 **/node_modules/
