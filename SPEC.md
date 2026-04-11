@@ -90,7 +90,19 @@ Skills（ツール群）
   - ノート検索・読み取り
   - 週次PDCAへの記録
 
-### Phase 2（将来）
+### Phase 2
+
+#### 4. スクラムエージェント (`skill-scrum`)
+
+- GitHub ProjectsベースのAI駆動スプリント管理
+- Sprint Planning、Task Executor、Auto Review、Daily Standup、Sprint Review
+- GitHub Actions Workflow（5つ）でカード自動遷移
+- 詳細: `docs/SDD-scrum-agent.md`
+- 対象リポジトリ: synthagent, rag-in-a-box, openclaw-aia, aia-corporate-lp
+- Cron: Task Executor（毎時）、Standup（平日08:00 JST）、Planning（月曜06:00 JST）、Review（日曜20:00 JST）
+
+### Phase 3（将来）
+
 - GitHub操作
 - AIA組織エージェント（7部門）への委譲
 - SynthAgent連携
