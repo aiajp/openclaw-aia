@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# synthagent-cli — Thin CLI adapter for SynthAgent HTTP API.
+#
+# Bridges kanban's CLI-based agent model to SynthAgent's FastAPI server.
+# Accepts a prompt via positional args or stdin and forwards it to the
+# SynthAgent chat/stream endpoint, printing SSE tokens to stdout.
+#
+# Usage:
+#   synthagent-cli "your prompt here"
+#   echo "your prompt" | synthagent-cli
+#   synthagent-cli --autonomous "your prompt here"   # (autonomous flag accepted but no-op for HTTP)
+#
+# Environment:
+#   SYNTHAGENT_BASE_URL   — API base URL (default: http://localhost:8000)
+#   SYNTHAGENT_API_KEY    — API key (sa_live_... or sa_test_...)
+#
+# Endpoints used:
+#   POST /v1/agent/chat/stream  — SSE streaming chat
+#   POST /v1/agent/chat         — Synchronous fallback
+
+set -euo pipefail
+
+SYNTHAGENT_BASE_URL="${SYNTHAGENT_BASE_URL:-http://localhost:8000}"
+SYNTHAGENT_API_KEY="${SYNTHAGENT_API_KEY:-}"
+
+# Parse flags (--autonomous is accepted for kanban compat but ignored)
+PROMPT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --autonomous) shift ;;
+    --api-key)    SYNTHAGENT_API_KEY="$2"; shift 2 ;;
+    --base-url)   SYNTHAGENT_BASE_URL="$2"; shift 2 ;;
+    --help|-h)
+      echo "Usage: synthagent-cli [--autonomous] [--api-key KEY] [--base-url URL] [PROMPT]"
+      echo ""
+      echo "Forwards a prompt to the SynthAgent HTTP API."
+      echo "If no PROMPT arg is given, reads from stdin."
+      exit 0
+      ;;
+    *)
+      if [[ -z "$PROMPT" ]]; then
+        PROMPT="$1"
+      else
+        PROMPT="$PROMPT $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+# Read from stdin only if it's a pipe/redirect (not a closed fd or tty)
+if [[ -z "$PROMPT" ]]; then
+  if [[ -p /dev/stdin ]] || [[ ! -t 0 && -s /dev/stdin ]]; then
+    PROMPT="$(cat)"
+  fi
+fi
+
+if [[ -z "$PROMPT" ]]; then
+  echo "Error: No prompt provided." >&2
+  exit 1
+fi
+
+if [[ -z "$SYNTHAGENT_API_KEY" ]]; then
+  echo "Error: SYNTHAGENT_API_KEY is not set." >&2
+  exit 1
+fi
+
+# Build JSON payload
+PAYLOAD=$(jq -n --arg msg "$PROMPT" '{ message: $msg }')
+
+STREAM_URL="${SYNTHAGENT_BASE_URL}/v1/agent/chat/stream"
+SYNC_URL="${SYNTHAGENT_BASE_URL}/v1/agent/chat"
+
+# SSE parser state
+current_event=""
+
+parse_sse_stream() {
+  while IFS= read -r line; do
+    # Strip trailing CR (SSE spec allows \r\n)
+    line="${line%$'\r'}"
+
+    # Empty line = end of SSE message
+    if [[ -z "$line" ]]; then
+      current_event=""
+      continue
+    fi
+
+    # event: field
+    if [[ "$line" == event:* ]]; then
+      current_event="${line#event: }"
+      current_event="${current_event# }"  # trim leading space
+      continue
+    fi
+
+    # data: field
+    if [[ "$line" == data:* ]]; then
+      local data="${line#data: }"
+      data="${data# }"  # trim leading space
+
+      # Determine event type: from prior "event:" line, or from JSON .event field
+      local etype="$current_event"
+      if [[ -z "$etype" ]]; then
+        etype=$(echo "$data" | jq -r '.event // empty' 2>/dev/null || true)
+      fi
+
+      case "$etype" in
+        token)
+          # Extract content — try .content first (SynthAgent standard), then .data
+          echo "$data" | jq -j '.content // .data // empty' 2>/dev/null || true
+          ;;
+        done)
+          echo ""  # trailing newline
+          ;;
+        ping)
+          ;;  # ignore heartbeats
+        error)
+          local errmsg
+          errmsg=$(echo "$data" | jq -r '.error // .data // "Unknown error"' 2>/dev/null || echo "Unknown error")
+          echo "Error: $errmsg" >&2
+          exit 1
+          ;;
+      esac
+      continue
+    fi
+  done
+}
+
+# Try streaming endpoint
+stream_result=$(curl -sN -w "\n%{http_code}" \
+  -X POST "$STREAM_URL" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ${SYNTHAGENT_API_KEY}" \
+  -d "$PAYLOAD" 2>/dev/null) || true
+
+# Extract HTTP status from last line
+http_code=$(echo "$stream_result" | tail -1)
+stream_body=$(echo "$stream_result" | sed '$d')
+
+if [[ "$http_code" == "200" ]]; then
+  echo "$stream_body" | parse_sse_stream
+else
+  # Fallback to sync endpoint
+  curl -s \
+    -X POST "$SYNC_URL" \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: ${SYNTHAGENT_API_KEY}" \
+    -d "$PAYLOAD" 2>/dev/null | jq -r '.response // .error // "No response"'
+fi
