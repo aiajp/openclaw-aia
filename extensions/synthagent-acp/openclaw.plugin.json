@@ -1,0 +1,26 @@
+{
+  "id": "synthagent-acp",
+  "name": "SynthAgent ACP Backend",
+  "description": "ACP runtime backend that bridges OpenClaw agent sessions to SynthAgent HTTP API",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "baseUrl": {
+        "type": "string",
+        "description": "SynthAgent API base URL",
+        "default": "http://localhost:8000"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "SynthAgent API key (sa_live_... or sa_test_...). Can also be set via SYNTHAGENT_API_KEY env var."
+      },
+      "timeoutSeconds": {
+        "type": "number",
+        "description": "Request timeout in seconds",
+        "default": 120
+      }
+    },
+    "additionalProperties": false
+  }
+}
